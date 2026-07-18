@@ -17,9 +17,10 @@ from typing import List, Optional
 from app.config.settings import Settings
 from app.ingestion.models import StitchedLog
 from app.ingestion.stitcher import LogStitcher
+from app.llm.analyzer import BatchAnalyzer
 from app.preprocessing.chunker import LogChunk, LogChunker
 from app.preprocessing.error_aggregator import ErrorAggregator, ErrorRecord
-from app.preprocessing.metrics_generator import MetricsGenerator
+from app.preprocessing.metrics_generator import BatchMetrics, MetricsGenerator
 from app.segmentation.deinterleaver import DeinterleavingEngine
 from app.segmentation.job_grouper import JobGrouper, JobRunGroup
 from app.segmentation.models import DeinterleavedResult
@@ -50,6 +51,7 @@ class PipelineResult:
     executions_stored: int = 0
     errors_stored: int = 0
     chunks_stored: int = 0
+    analyses_triggered: int = 0
     duration_seconds: float = 0.0
     warnings: List[str] = field(default_factory=list)
 
@@ -90,6 +92,13 @@ class IntelligencePipeline:
         # Ensure schema exists on startup.
         self.db.initialize()
 
+        # LLM analysis (initialised lazily — skipped if no API key).
+        self.analyzer: Optional[BatchAnalyzer] = (
+            BatchAnalyzer(settings, self.repo)
+            if settings.anthropic_api_key
+            else None
+        )
+
     # ── Public API ──────────────────────────────────────────────
 
     def run(
@@ -123,6 +132,7 @@ class IntelligencePipeline:
         executions_stored = 0
         errors_stored = 0
         chunks_stored = 0
+        analyses_triggered = 0
 
         # ── Step 1: Stitch ───────────────────────────────────────
         t0 = time.monotonic()
@@ -274,14 +284,55 @@ class IntelligencePipeline:
                         execution.correlation_id,
                     )
 
+            # ── Step 4b: LLM analysis for this group ────────────────
+            if self.analyzer is not None:
+                # Collect pre-computed errors and metrics for all
+                # executions in this group (built in the loop above).
+                group_errors: dict = {}
+                group_metrics: dict = {}
+                for execution in group.executions:
+                    errs = self.error_aggregator.aggregate(execution)
+                    met = self.metrics_generator.generate(execution)
+                    group_errors[execution.correlation_id] = errs
+                    group_metrics[execution.correlation_id] = met
 
+                for execution in group.executions:
+                    try:
+                        self.analyzer.analyze_execution(
+                            execution=execution,
+                            errors=group_errors[execution.correlation_id],
+                            metrics=group_metrics[execution.correlation_id],
+                        )
+                        analyses_triggered += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "LLM analysis failed for %s: %s",
+                            execution.correlation_id,
+                            exc,
+                        )
+
+                if group.total_runs > 1:
+                    try:
+                        self.analyzer.analyze_job_run_group(
+                            group=group,
+                            all_errors=group_errors,
+                            all_metrics=group_metrics,
+                        )
+                        analyses_triggered += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "LLM group analysis failed for %s: %s",
+                            group.job_name,
+                            exc,
+                        )
 
         logger.info(
-            "Step 4 Preprocess+Store: %d executions, %d errors, "
-            "%d chunks in %.2fs",
+            "Step 4 Preprocess+Store+Analyze: %d executions, %d errors, "
+            "%d chunks, %d analyses in %.2fs",
             executions_stored,
             errors_stored,
             chunks_stored,
+            analyses_triggered,
             time.monotonic() - t0,
         )
 
@@ -306,6 +357,7 @@ class IntelligencePipeline:
             executions_stored=executions_stored,
             errors_stored=errors_stored,
             chunks_stored=chunks_stored,
+            analyses_triggered=analyses_triggered,
             duration_seconds=round(duration, 3),
             warnings=warnings,
         )
