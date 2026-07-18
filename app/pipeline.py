@@ -92,12 +92,9 @@ class IntelligencePipeline:
         # Ensure schema exists on startup.
         self.db.initialize()
 
-        # LLM analysis (initialised lazily — skipped if no API key).
-        self.analyzer: Optional[BatchAnalyzer] = (
-            BatchAnalyzer(settings, self.repo)
-            if settings.anthropic_api_key
-            else None
-        )
+        # LLM analysis — always instantiated; get_llm_client() inside
+        # BatchAnalyzer returns None when no API key is configured.
+        self.analyzer = BatchAnalyzer(settings, self.repo)
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -285,7 +282,7 @@ class IntelligencePipeline:
                     )
 
             # ── Step 4b: LLM analysis for this group ────────────────
-            if self.analyzer is not None:
+            if self.analyzer._client is not None:
                 # Collect pre-computed errors and metrics for all
                 # executions in this group (built in the loop above).
                 group_errors: dict = {}

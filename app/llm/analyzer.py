@@ -12,10 +12,9 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
-import anthropic
-
 from app.config.constants import Severity
 from app.config.settings import Settings
+from app.llm.client import LLMClient, get_llm_client
 from app.llm.digest_builder import DigestBuilder
 from app.llm.models import (
     BatchAnalysisResponse,
@@ -52,15 +51,13 @@ class BatchAnalyzer:
         """Initialise with application settings and repository.
 
         Args:
-            settings: Provides API key, model name, and prompt version.
+            settings: Provides API key(s), model name, and prompt version.
             repo: Used for idempotency checks and persisting results.
         """
         self._settings = settings
         self._repo = repo
         self._digest_builder = DigestBuilder(settings)
-        self._client = anthropic.Anthropic(
-            api_key=settings.anthropic_api_key or "sk-placeholder"
-        )
+        self._client: Optional[LLMClient] = get_llm_client(settings)
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -190,25 +187,28 @@ class BatchAnalyzer:
     # ── Private: LLM call ────────────────────────────────────────
 
     def _call_llm(self, system: str, user_content: str) -> tuple[str, dict]:
-        """Make the Anthropic messages.create call.
+        """Dispatch to the configured LLM provider.
 
         Returns:
             ``(raw_text, usage_dict)`` where usage_dict has
             ``input_tokens`` and ``output_tokens``.
         """
+        if self._client is None:
+            logger.warning("No LLM client configured — returning stub response.")
+            stub = json.dumps({
+                "summary": "LLM analysis skipped: no API key configured.",
+                "root_cause": None,
+                "error_categories": [],
+                "recommendations": [],
+                "business_impact": "Analysis unavailable — configure an API key to enable.",
+                "retry_recommended": False,
+                "tags": ["no-llm"],
+                "evidence_anchors": [],
+            })
+            return stub, {"input_tokens": 0, "output_tokens": 0}
+
         try:
-            response = self._client.messages.create(
-                model=self._settings.llm_model,
-                max_tokens=self._settings.llm_max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user_content}],
-            )
-            raw_text: str = response.content[0].text
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-            return raw_text, usage
+            return self._client.call(system, user_content)
         except Exception as exc:
             logger.error("LLM API call failed: %s", exc)
             error_text = json.dumps({

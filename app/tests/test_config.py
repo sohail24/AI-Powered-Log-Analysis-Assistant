@@ -42,9 +42,9 @@ class TestSettings:
         assert isinstance(settings, Settings)
 
     def test_default_llm_model(self) -> None:
-        """Default LLM model is claude-sonnet-4-6."""
+        """Default LLM model is empty string (allowing provider defaults)."""
         settings = Settings()
-        assert settings.llm_model == "claude-sonnet-4-6"
+        assert settings.llm_model == ""
 
     def test_default_llm_max_tokens(self) -> None:
         """Default max tokens is 1024."""

@@ -40,13 +40,30 @@ class Settings(BaseSettings):
     )
 
     # ── LLM ─────────────────────────────────────────────────────
+    llm_provider: str = Field(
+        default="auto",
+        description=(
+            "LLM provider: 'anthropic', 'google', or 'auto' (prefer "
+            "Anthropic when both keys are set)."
+        ),
+    )
     anthropic_api_key: str = Field(
         default="",
         description="Anthropic API key (set via ANTHROPIC_API_KEY env var).",
     )
+    google_api_key: str = Field(
+        default="",
+        description=(
+            "Google AI Studio API key for Gemini models "
+            "(set via GOOGLE_API_KEY env var)."
+        ),
+    )
     llm_model: str = Field(
-        default="claude-sonnet-4-6",
-        description="Claude model identifier.",
+        default="",
+        description=(
+            "LLM model identifier. Leave empty to use the provider default "
+            "(claude-sonnet-4-6 for Anthropic, gemini-2.0-flash for Google)."
+        ),
     )
     llm_max_tokens: int = Field(
         default=1024,

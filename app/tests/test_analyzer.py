@@ -23,6 +23,7 @@ import pytest
 from app.config.constants import Severity
 from app.config.settings import Settings
 from app.llm.analyzer import BatchAnalyzer
+from app.llm.digest_builder import DigestBuilder
 from app.llm.models import BatchAnalysisResponse
 from app.preprocessing.error_aggregator import ErrorRecord
 from app.preprocessing.metrics_generator import BatchMetrics
@@ -128,17 +129,11 @@ def _metrics() -> BatchMetrics:
     )
 
 
-def _make_mock_anthropic_response(text: str) -> MagicMock:
-    """Build a mock that mirrors the anthropic.Message structure."""
-    content_block = MagicMock()
-    content_block.text = text
-    usage = MagicMock()
-    usage.input_tokens = 500
-    usage.output_tokens = 200
-    msg = MagicMock()
-    msg.content = [content_block]
-    msg.usage = usage
-    return msg
+def _make_mock_llm_client(text: str) -> MagicMock:
+    """Build a mock LLMClient whose call() returns (text, usage)."""
+    client = MagicMock()
+    client.call.return_value = (text, {"input_tokens": 500, "output_tokens": 200})
+    return client
 
 
 @pytest.fixture
@@ -165,15 +160,14 @@ def settings() -> Settings:
 
 @pytest.fixture
 def analyzer(settings: Settings, repo: BatchRepository) -> BatchAnalyzer:
-    """Return a BatchAnalyzer with the Anthropic client mocked."""
-    with patch("app.llm.analyzer.anthropic.Anthropic") as MockAnthropic:
-        instance = MockAnthropic.return_value
-        instance.messages.create.return_value = _make_mock_anthropic_response(
-            _VALID_RESPONSE
-        )
-        analyzer = BatchAnalyzer(settings, repo)
-        analyzer._client = instance   # expose for per-test assertions
-        yield analyzer
+    """Return a BatchAnalyzer with a mock LLMClient injected."""
+    a = BatchAnalyzer.__new__(BatchAnalyzer)
+    a._settings = settings
+    a._repo = repo
+    a._digest_builder = DigestBuilder(settings)
+    mock_client = _make_mock_llm_client(_VALID_RESPONSE)
+    a._client = mock_client
+    return a
 
 
 # ── Test: _safe_parse ────────────────────────────────────────────
@@ -186,8 +180,12 @@ class TestSafeParse:
         db.initialize()
         repo = BatchRepository(db)
         s = Settings(anthropic_api_key="sk-test")
-        with patch("app.llm.analyzer.anthropic.Anthropic"):
-            return BatchAnalyzer(s, repo)
+        a = BatchAnalyzer.__new__(BatchAnalyzer)
+        a._settings = s
+        a._repo = repo
+        a._digest_builder = DigestBuilder(s)
+        a._client = None
+        return a
 
     def test_parses_clean_json(self) -> None:
         """Direct JSON string is parsed successfully."""
@@ -292,7 +290,7 @@ class TestAnalyzeExecution:
         repo.upsert_execution(exc, job_id=1, run_number=1,
                               attempt_type="SCHEDULED", environment="prod")
         analyzer.analyze_execution(exc, [], _metrics())
-        assert analyzer._client.messages.create.call_count == 1
+        assert analyzer._client.call.call_count == 1
 
     def test_cached_response_returned_on_second_call(
         self, analyzer: BatchAnalyzer, repo: BatchRepository
@@ -304,10 +302,10 @@ class TestAnalyzeExecution:
                               attempt_type="SCHEDULED", environment="prod")
         # First call.
         analyzer.analyze_execution(exc, [], _metrics())
-        call_count_after_first = analyzer._client.messages.create.call_count
+        call_count_after_first = analyzer._client.call.call_count
         # Second call.
         analyzer.analyze_execution(exc, [], _metrics())
-        call_count_after_second = analyzer._client.messages.create.call_count
+        call_count_after_second = analyzer._client.call.call_count
         # No additional API call.
         assert call_count_after_second == call_count_after_first
 
@@ -321,7 +319,7 @@ class TestAnalyzeExecution:
                               attempt_type="SCHEDULED", environment="prod")
         analyzer.analyze_execution(exc, [], _metrics())
         analyzer.analyze_execution(exc, [], _metrics(), force_reanalyze=True)
-        assert analyzer._client.messages.create.call_count == 2
+        assert analyzer._client.call.call_count == 2
 
     def test_stores_response_to_db(
         self, analyzer: BatchAnalyzer, repo: BatchRepository
@@ -401,14 +399,12 @@ class TestAnalyzeExecutionMalformedResponse:
         exc = _execution()
         self._seed_job(repo, exc)
 
-        with patch("app.llm.analyzer.anthropic.Anthropic") as MockAnthropic:
-            instance = MockAnthropic.return_value
-            instance.messages.create.return_value = _make_mock_anthropic_response(
-                "I'm sorry, I cannot analyse this log."
-            )
-            a = BatchAnalyzer(settings, repo)
-            a._client = instance
-            result = a.analyze_execution(exc, [], _metrics())
+        a = BatchAnalyzer.__new__(BatchAnalyzer)
+        a._settings = settings
+        a._repo = repo
+        a._digest_builder = DigestBuilder(settings)
+        a._client = _make_mock_llm_client("I'm sorry, I cannot analyse this log.")
+        result = a.analyze_execution(exc, [], _metrics())
 
         assert isinstance(result, BatchAnalysisResponse)
         assert result.parse_success is False
@@ -422,12 +418,12 @@ class TestAnalyzeExecutionMalformedResponse:
         exc = _execution()
         self._seed_job(repo, exc)
 
-        with patch("app.llm.analyzer.anthropic.Anthropic") as MockAnthropic:
-            instance = MockAnthropic.return_value
-            instance.messages.create.return_value = _make_mock_anthropic_response("")
-            a = BatchAnalyzer(settings, repo)
-            a._client = instance
-            result = a.analyze_execution(exc, [], _metrics())
+        a = BatchAnalyzer.__new__(BatchAnalyzer)
+        a._settings = settings
+        a._repo = repo
+        a._digest_builder = DigestBuilder(settings)
+        a._client = _make_mock_llm_client("")
+        result = a.analyze_execution(exc, [], _metrics())
 
         assert isinstance(result, BatchAnalysisResponse)
         assert result.parse_success is False
@@ -460,8 +456,10 @@ class TestAnalyzeJobRunGroup:
             executions=[exc1, exc2],
         )
         analyzer.analyze_job_run_group(group, {}, {})
-        _, call_kwargs = analyzer._client.messages.create.call_args
-        assert call_kwargs.get("system") == MULTI_RUN_SYSTEM_PROMPT
+        # The unified client.call(system, user_content) takes positional args.
+        call_args = analyzer._client.call.call_args
+        system_arg = call_args[0][0] if call_args[0] else call_args[1].get("system")
+        assert system_arg == MULTI_RUN_SYSTEM_PROMPT
 
     def test_group_result_stored_with_group_cid(
         self, analyzer: BatchAnalyzer, repo: BatchRepository
@@ -503,3 +501,97 @@ class TestAnalyzeJobRunGroup:
         result = analyzer.analyze_job_run_group(group, {}, {})
         assert isinstance(result, BatchAnalysisResponse)
         assert result.parse_success is False
+
+
+# ── Test: LLM Client Factory and Providers ──────────────────────
+
+class TestLLMClientFactory:
+    """Verify that Settings correctly resolves LLM providers and models."""
+
+    def test_factory_returns_none_if_no_keys(self) -> None:
+        """If no keys are provided, return None (disabled)."""
+        from app.llm.client import get_llm_client
+        s = Settings(llm_provider="auto", anthropic_api_key="", google_api_key="")
+        client = get_llm_client(s)
+        assert client is None
+
+    def test_factory_resolves_explicit_anthropic(self) -> None:
+        """Explicitly request 'anthropic' provider."""
+        from app.llm.client import get_llm_client, AnthropicClient
+        s = Settings(
+            llm_provider="anthropic",
+            anthropic_api_key="sk-ant",
+            google_api_key="AIza",
+            llm_model="custom-claude"
+        )
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            client = get_llm_client(s)
+            assert isinstance(client, AnthropicClient)
+            assert client._model == "custom-claude"
+            assert client._max_tokens == 1024
+            MockAnthropic.assert_called_once_with(api_key="sk-ant")
+
+    def test_factory_resolves_explicit_google(self) -> None:
+        """Explicitly request 'google' provider."""
+        from app.llm.client import get_llm_client, GoogleClient
+        s = Settings(
+            llm_provider="google",
+            anthropic_api_key="sk-ant",
+            google_api_key="AIza-key",
+            llm_model="custom-gemini"
+        )
+        with patch("google.generativeai.configure") as mock_configure:
+            client = get_llm_client(s)
+            assert isinstance(client, GoogleClient)
+            assert client._model_name == "custom-gemini"
+            mock_configure.assert_called_once_with(api_key="AIza-key")
+
+    def test_factory_auto_detect_prefers_anthropic(self) -> None:
+        """Auto mode with both keys present prefers Anthropic."""
+        from app.llm.client import get_llm_client, AnthropicClient
+        s = Settings(
+            llm_provider="auto",
+            anthropic_api_key="sk-ant",
+            google_api_key="AIza-key"
+        )
+        with patch("anthropic.Anthropic"):
+            client = get_llm_client(s)
+            assert isinstance(client, AnthropicClient)
+            assert client._model == "claude-sonnet-4-6"  # default model resolved
+
+    def test_factory_auto_detect_falls_back_to_google(self) -> None:
+        """Auto mode with only Google key returns Google client."""
+        from app.llm.client import get_llm_client, GoogleClient
+        s = Settings(
+            llm_provider="auto",
+            anthropic_api_key="",
+            google_api_key="AIza-key"
+        )
+        with patch("google.generativeai.configure"):
+            client = get_llm_client(s)
+            assert isinstance(client, GoogleClient)
+            assert client._model_name == "gemini-2.0-flash"  # default model resolved
+
+    def test_google_client_wraps_call(self) -> None:
+        """GoogleClient.call correctly invokes the generativeai SDK and yields token usage."""
+        from app.llm.client import GoogleClient
+        with patch("google.generativeai.configure"):
+            client = GoogleClient(api_key="key", model="gemini-model", max_tokens=256)
+
+        # Mock the GenerativeModel call.
+        mock_model = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "test output"
+        mock_response.usage_metadata.prompt_token_count = 120
+        mock_response.usage_metadata.candidates_token_count = 50
+        mock_model.generate_content.return_value = mock_response
+        client._genai.GenerativeModel = MagicMock(return_value=mock_model)
+
+        raw, usage = client.call("system-instructions", "user-content")
+        assert raw == "test output"
+        assert usage == {"input_tokens": 120, "output_tokens": 50}
+        client._genai.GenerativeModel.assert_called_once()
+        _, kwargs = client._genai.GenerativeModel.call_args
+        assert kwargs["system_instruction"] == "system-instructions"
+        assert kwargs["generation_config"].max_output_tokens == 256
+        assert kwargs["generation_config"].temperature == 0.0

@@ -167,6 +167,72 @@ with st.sidebar:
         help="Directory containing raw log files to process.",
     )
 
+    st.divider()
+    st.markdown(
+        "<span style='color:#a5b4fc; font-size:0.8rem; font-weight:600; "
+        "letter-spacing:0.08em'>🤖 LLM PROVIDER</span>",
+        unsafe_allow_html=True,
+    )
+
+    llm_provider = st.selectbox(
+        "Provider",
+        options=["auto", "anthropic", "google", "disabled"],
+        index=["auto", "anthropic", "google", "disabled"].index(
+            st.session_state.get("llm_provider_sel", settings.llm_provider or "auto")
+        ),
+        key="llm_provider_sel",
+        help=(
+            "auto: use whichever key is set. "
+            "disabled: skip LLM analysis."
+        ),
+    )
+
+    if llm_provider == "anthropic":
+        anthropic_key = st.text_input(
+            "Anthropic API Key",
+            value=st.session_state.get("llm_anthropic_key", settings.anthropic_api_key or ""),
+            type="password",
+            key="llm_anthropic_key",
+            placeholder="sk-ant-…",
+        )
+        google_key = ""
+    elif llm_provider == "google":
+        google_key = st.text_input(
+            "Google AI Studio API Key",
+            value=st.session_state.get("llm_google_key", settings.google_api_key or ""),
+            type="password",
+            key="llm_google_key",
+            placeholder="AIza…",
+        )
+        anthropic_key = ""
+    elif llm_provider == "auto":
+        anthropic_key = st.text_input(
+            "Anthropic API Key (optional)",
+            value=st.session_state.get("llm_anthropic_key", settings.anthropic_api_key or ""),
+            type="password",
+            key="llm_anthropic_key",
+            placeholder="sk-ant-…",
+        )
+        google_key = st.text_input(
+            "Google AI Studio API Key (optional)",
+            value=st.session_state.get("llm_google_key", settings.google_api_key or ""),
+            type="password",
+            key="llm_google_key",
+            placeholder="AIza…",
+        )
+    else:  # disabled
+        anthropic_key = ""
+        google_key = ""
+        st.caption("⛔ LLM analysis is disabled.")
+
+    llm_model_override = st.text_input(
+        "Model override (optional)",
+        value=st.session_state.get("llm_model_override", settings.llm_model or ""),
+        key="llm_model_override",
+        placeholder="leave blank for provider default",
+        help="e.g. gemini-2.0-flash or claude-sonnet-4-6",
+    )
+
     # Run Pipeline button.
     run_clicked = st.button(
         "▶ Run Pipeline",
@@ -179,25 +245,39 @@ with st.sidebar:
     if "last_run_time" in st.session_state:
         last = st.session_state["last_run_time"]
         batches = st.session_state.get("last_run_batches", 0)
+        analyses = st.session_state.get("last_run_analyses", 0)
         st.markdown(
             f"<small style='color:#64748b'>Last run: "
             f"{last.strftime('%H:%M:%S')}<br>"
-            f"Batches: {batches}</small>",
+            f"Batches: {batches} | Analyses: {analyses}</small>",
             unsafe_allow_html=True,
         )
 
-# ── Run Pipeline ─────────────────────────────────────────────────
+# ── Run Pipeline ───────────────────────────────────────────
 if run_clicked:
     st.session_state.pop("pipeline_error", None)
     with st.spinner("🔄 Running ingestion pipeline…"):
         try:
-            pipeline = IntelligencePipeline(settings)
+            # Build a per-run settings override so API key changes take
+            # effect immediately without restarting the Streamlit server.
+            run_settings = Settings(
+                log_directory=log_dir,
+                db_path=settings.db_path,
+                llm_provider=llm_provider if llm_provider != "disabled" else "auto",
+                anthropic_api_key=anthropic_key if llm_provider != "disabled" else "",
+                google_api_key=google_key if llm_provider != "disabled" else "",
+                llm_model=llm_model_override or "",
+                llm_max_tokens=settings.llm_max_tokens,
+                llm_prompt_version=settings.llm_prompt_version,
+            )
+            pipeline = IntelligencePipeline(run_settings)
             result = pipeline.run(
                 log_directory=log_dir,
                 environment=env,
             )
             st.session_state["last_run_time"] = datetime.now()
             st.session_state["last_run_batches"] = result.executions_stored
+            st.session_state["last_run_analyses"] = result.analyses_triggered
             st.session_state["last_pipeline_result"] = result
         except Exception as exc:
             st.session_state["pipeline_error"] = str(exc)
@@ -213,7 +293,8 @@ if run_clicked:
         r = st.session_state["last_pipeline_result"]
         st.success(
             f"✅ Pipeline complete — **{r.executions_stored}** batches, "
-            f"**{r.errors_stored}** errors, **{r.chunks_stored}** chunks"
+            f"**{r.errors_stored}** errors, **{r.chunks_stored}** chunks, "
+            f"**{r.analyses_triggered}** LLM analyses"
         )
         if r.warnings:
             with st.expander(f"⚠️ {len(r.warnings)} warnings"):
