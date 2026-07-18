@@ -1,0 +1,21 @@
+2026-07-18 00:00:03 [INFO] [CID:SVC-001] Service health check passed
+2026-07-18 00:00:08 [INFO] [CID:SVC-001] Memory usage: 2.4GB / 8GB
+2026-07-18 00:00:12 [DEBUG] [CID:SVC-001] Active connections: 47
+2026-07-18 00:00:18 [INFO] [CID:SVC-001] Request queue depth: 12
+2026-07-18 00:00:22 [WARN] [CID:SVC-001] CPU usage spike detected: 82%
+2026-07-18 00:00:28 [INFO] [CID:SVC-001] Auto-scaling triggered: adding 1 instance
+2026-07-18 00:00:33 [INFO] [CID:SVC-001] New instance online: worker-node-04
+2026-07-18 00:00:38 [INFO] [CID:SVC-001] CPU usage normalized: 45%
+2026-07-18 00:01:03 [INFO] [CID:SVC-002] Dependency check: database OK
+2026-07-18 00:01:08 [INFO] [CID:SVC-002] Dependency check: cache OK
+2026-07-18 00:01:13 [ERROR] [CID:SVC-002] Dependency check: message queue UNREACHABLE
+  Connection refused: rabbitmq.internal:5672
+2026-07-18 00:01:18 [WARN] [CID:SVC-002] Falling back to synchronous processing
+2026-07-18 00:01:23 [INFO] [CID:SVC-002] Message queue reconnected after 10s
+2026-07-18 00:01:28 [INFO] [CID:SVC-002] Resuming async processing
+2026-07-18 02:00:03 [INFO] [CID:SVC-003] Heartbeat: all services healthy
+2026-07-18 02:00:08 [INFO] [CID:SVC-003] Disk usage: /data 62%, /tmp 15%
+2026-07-18 02:00:13 [DEBUG] [CID:SVC-003] GC pause: 12ms (minor)
+2026-07-18 02:00:18 [INFO] [CID:SVC-003] Certificate expiry check: 45 days remaining
+2026-07-18 04:00:03 [WARN] [CID:SVC-004] Scheduled maintenance window approaching
+2026-07-18 04:00:08 [INFO] [CID:SVC-004] Pre-maintenance snapshot created

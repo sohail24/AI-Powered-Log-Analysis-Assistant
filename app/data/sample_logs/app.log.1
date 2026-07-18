@@ -1,0 +1,31 @@
+2026-07-17 22:00:01 [INFO] [CID:BATCH-PREV-001] Starting job nightly-sync
+2026-07-17 22:00:05 [INFO] [CID:BATCH-PREV-001] Connecting to remote API
+2026-07-17 22:00:10 [DEBUG] [CID:BATCH-PREV-001] API endpoint: https://api.example.com/v2/sync
+2026-07-17 22:00:15 [INFO] [CID:BATCH-PREV-001] Fetching delta since last sync
+2026-07-17 22:00:20 [INFO] [CID:BATCH-PREV-001] Delta contains 5600 records
+2026-07-17 22:00:25 [INFO] [CID:BATCH-PREV-001] Applying delta to local store
+2026-07-17 22:00:30 [WARN] [CID:BATCH-PREV-001] 3 records had schema mismatch — transformed
+2026-07-17 22:00:35 [INFO] [CID:BATCH-PREV-001] Local store updated successfully
+2026-07-17 22:00:40 [INFO] [CID:BATCH-PREV-001] Job completed SUCCESS
+2026-07-17 23:00:01 [INFO] [CID:BATCH-PREV-002] Starting job integrity-check
+2026-07-17 23:00:05 [INFO] [CID:BATCH-PREV-002] Checking table: users (45000 rows)
+2026-07-17 23:00:10 [INFO] [CID:BATCH-PREV-002] Checking table: orders (120000 rows)
+2026-07-17 23:00:15 [ERROR] [CID:BATCH-PREV-002] Checksum mismatch in orders partition 7
+  Expected: a4f2c8d1e6b3
+  Got:      a4f2c8d1e6b4
+2026-07-17 23:00:20 [WARN] [CID:BATCH-PREV-002] Marking partition 7 for re-sync
+2026-07-17 23:00:25 [INFO] [CID:BATCH-PREV-002] Checking table: products (8500 rows)
+2026-07-17 23:00:30 [INFO] [CID:BATCH-PREV-002] All other tables passed integrity check
+2026-07-17 23:00:35 [INFO] [CID:BATCH-PREV-002] Job completed SUCCESS
+2026-07-17 23:30:01 [INFO] [CID:BATCH-PREV-003] Starting job cache-warmup
+2026-07-17 23:30:05 [INFO] [CID:BATCH-PREV-003] Warming product cache
+2026-07-17 23:30:10 [INFO] [CID:BATCH-PREV-003] Warming user preferences cache
+2026-07-17 23:30:15 [INFO] [CID:BATCH-PREV-003] Warming pricing engine cache
+2026-07-17 23:30:20 [DEBUG] [CID:BATCH-PREV-003] Cache hit ratio before warm: 62%
+2026-07-17 23:30:25 [INFO] [CID:BATCH-PREV-003] Cache hit ratio after warm: 94%
+2026-07-17 23:30:30 [INFO] [CID:BATCH-PREV-003] Job completed SUCCESS
+2026-07-17 23:45:01 [INFO] [CID:BATCH-PREV-004] Starting job log-rotate
+2026-07-17 23:45:05 [INFO] [CID:BATCH-PREV-004] Rotating application logs
+2026-07-17 23:45:10 [INFO] [CID:BATCH-PREV-004] Compressed 12 log files
+2026-07-17 23:45:15 [INFO] [CID:BATCH-PREV-004] Moved to archive: /archive/logs/20260717/
+2026-07-17 23:45:20 [INFO] [CID:BATCH-PREV-004] Job completed SUCCESS
