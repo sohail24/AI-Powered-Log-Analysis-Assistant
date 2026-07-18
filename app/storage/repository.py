@@ -540,6 +540,145 @@ class BatchRepository:
         finally:
             self._close(conn)
 
+    def get_executions_by_date_range(
+        self,
+        start_date: date,
+        end_date: date,
+        environment: str = "prod",
+    ) -> List[sqlite3.Row]:
+        """Return all executions in a date range for an environment.
+
+        Args:
+            start_date: Inclusive lower bound (calendar date).
+            end_date: Inclusive upper bound (calendar date).
+            environment: Deployment environment filter.
+
+        Returns:
+            List of rows from ``batch_executions``.
+        """
+        conn = self._db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT be.*,
+                       bj.job_name
+                FROM batch_executions be
+                LEFT JOIN batch_jobs bj ON be.job_id = bj.id
+                WHERE DATE(be.start_time) BETWEEN ? AND ?
+                  AND be.environment = ?
+                ORDER BY be.start_time ASC
+                """,
+                (start_date.isoformat(), end_date.isoformat(), environment),
+            ).fetchall()
+            return rows
+        finally:
+            self._close(conn)
+
+    def get_executions_by_job_and_date_range(
+        self,
+        job_name: str,
+        start_date: date,
+        end_date: date,
+        environment: str = "prod",
+    ) -> List[sqlite3.Row]:
+        """Return executions for a specific job in a date range.
+
+        Args:
+            job_name: Normalised job name.
+            start_date: Inclusive lower bound.
+            end_date: Inclusive upper bound.
+            environment: Deployment environment filter.
+
+        Returns:
+            List of rows from ``batch_executions`` joined to
+            ``batch_jobs``.
+        """
+        conn = self._db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT be.*,
+                       bj.job_name,
+                       DATE(be.start_time) AS run_date
+                FROM batch_executions be
+                JOIN batch_jobs bj ON be.job_id = bj.id
+                WHERE bj.job_name = ?
+                  AND DATE(be.start_time) BETWEEN ? AND ?
+                  AND be.environment = ?
+                ORDER BY be.start_time ASC
+                """,
+                (
+                    job_name,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                    environment,
+                ),
+            ).fetchall()
+            return rows
+        finally:
+            self._close(conn)
+
+    def get_all_job_names(self) -> List[sqlite3.Row]:
+        """Return distinct job names stored in the database.
+
+        Returns:
+            List of rows with column ``job_name``.
+        """
+        conn = self._db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT job_name
+                FROM batch_jobs
+                ORDER BY job_name ASC
+                """
+            ).fetchall()
+            return rows
+        finally:
+            self._close(conn)
+
+    def get_error_summaries_by_date_range(
+        self,
+        start_date: date,
+        end_date: date,
+        environment: str = "prod",
+    ) -> List[sqlite3.Row]:
+        """Return all error summaries for a date range and environment.
+
+        Joins ``error_summary`` → ``batch_executions`` → ``batch_jobs``
+        so each row includes ``job_name`` and ``run_number``.
+
+        Args:
+            start_date: Inclusive lower bound (calendar date).
+            end_date: Inclusive upper bound (calendar date).
+            environment: Deployment environment filter.
+
+        Returns:
+            List of joined rows.
+        """
+        conn = self._db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    es.*,
+                    bj.job_name,
+                    be.run_number
+                FROM error_summary es
+                JOIN batch_executions be
+                  ON es.correlation_id = be.correlation_id
+                JOIN batch_jobs bj
+                  ON be.job_id = bj.id
+                WHERE DATE(be.start_time) BETWEEN ? AND ?
+                  AND be.environment = ?
+                ORDER BY es.count DESC
+                """,
+                (start_date.isoformat(), end_date.isoformat(), environment),
+            ).fetchall()
+            return rows
+        finally:
+            self._close(conn)
+
     # ── Private helpers ─────────────────────────────────────────
 
     @staticmethod
@@ -553,3 +692,4 @@ class BatchRepository:
         if start is None or end is None:
             return None
         return (end - start).total_seconds()
+
